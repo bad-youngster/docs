@@ -1,0 +1,95 @@
+** sudo lva **
+
+# Steps to be performed at server console:
+# - Change to static IP: sudo lva change-ip-static
+# - Change hostname: sudo lva change-hostname
+# - Allow openssh: sudo ufw allow openssh
+# - Ensure NTP sync is OK: chronyc sources
+
+fdqn=test.example.com
+ip=192.168.1.1
+namespace=test
+# Setup environment variables
+bdhpFqdn=<Your preferred FDQN>
+bdhpVersion=4.4.2
+metalVIP="<Your preferred IP>"
+namespace=<Your preferred k8s namespace>
+
+# Install microk8s
+sudo lva setup-m8s-storage /dev/sdb
+sudo lva install-etcd
+sudo lva install-microk8s
+sudo lva install-metallb $metalVIP
+sudo lva install-openebs
+sudo lva install-ingress
+sudo lva install-loki
+
+# Install Postgres & MongoDB & backup drive
+sudo lva setup-db-storage /dev/sdc postgres
+sudo lva setup-db-storage /dev/sdd mongodb
+sudo lva setup-backups-storage /dev/sde
+sudo lva install-postgres
+sudo lva install-mongodb
+
+# Node has to be labeled for redis-bdg pod to start, but LVA for DB 4.4.x
+# has obsoleted labelling for redis.  Work-around using kubectl command.
+kubectl label nodes $HOSTNAME redis-bdg-node=true
+
+# Install Platform
+sudo lva platform:install -n $namespace $bdhpVersion \
+--database=postgres \
+--domain=$bdhpFqdn \
+--set 'smtp.host=localhost,smtp.port=25,smtp.from=no-reply@baxter.com,smtp.ssl=false' \
+--set 'clamav.enabled=true' \
+--set 'tags.cdr=true' \
+--set 'tags.beds=true' \
+--set 'tags.manual-adt=true' \
+--set 'mdap-ntpd.enabled=true'
+
+# Additional tags if required
+--set 'tags.pumps=true'
+--set 'vernemq.service.mqtts.port=8884'
+--set 'global.customer.live=true'
+
+# Command to add tags post install
+sudo lva upgrade mdap:<version> -n <namespace> --set <my.new.option=true>
+
+
+# Install Bed Dashboard
+sudo lva install dashboard:1.0.10002 -n $namespace
+
+# To search for latest Dashboard version
+lva search dashboard
+
+
+# To install IQ Enterprise and CQI Report, pull Helm chart first and install from local Helm chart
+lva ecr-pull "iqeg-gateway-helm:3.0.0"
+lva ecr-pull "iqeg-cqi-helm:3.0.0"
+lva install -n $namespace iqeg-gateway-helm-3.0.0.tgz
+lva install -n $namespace iqeg-cqi-helm-3.0.0.tgz
+
+
+** KeyCloak **
+
+1. "Platform" realm
+   - Create ECP admin group (e.g. ECP_Admin)
+     - Assign all Gateway Client Roles to this group.
+   - Create ECP admin user account and assign user to ECM admin group
+2. "mdap" realm
+   - Add "user_groups" as default Client Scopes to "Dashboard" Client
+   - Create "Dashboard Users" group
+   - Create Dashboard user account and assign to "Dashboard Users" group.
+   
+
+
+** Enterprise Configuration **
+
+1. Create an Enterprise and it's hierachy, up to units
+2. Create connections at Facility level
+   - Inbound Bed
+   - Inbound ADT
+   - Outbound CDR
+   - Outbound unconfirmed data
+3. Import Location to Facility Level
+4. Create domain at Enterprise level and configure Domain Groups
+
